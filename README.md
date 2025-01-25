@@ -11,6 +11,4 @@ ShardPack is a storage format for large-scale datasets designed to solve common 
   * [✅] Fast compression support 
   * [🛠️] FHE support
   * [🛠️] Distributed training support
-  * [🛠️] Native integration with S3 buckets
-
-
+ 
