@@ -16,8 +16,10 @@ async-trait = "0.1.85"
 futures = "0.3.31"
 flate2 = "1.0.35"
 lz4_flex = "0.11.3"
+byte_counter = "1.0.0"
 
 [dev-dependencies]
+mockall = "0.13.1"
 tempfile = "3.15.0"
 
 

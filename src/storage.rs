@@ -1,15 +1,18 @@
-use crate::error::{Error, Result};
+use crate::error::Error;
+use crate::types::Result;
+
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncWrite};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+const DEFAULT_LOCAL_STORAGE_PATH: &str = "./local_bucket";
+
 #[async_trait]
-pub trait StorageProvider: Send + Sync {
+pub trait StorageProvider: Send + Sync + Default {
     async fn create_bucket(&self, name: &str) -> Result<()>;
     async fn delete_bucket(&self, name: &str) -> Result<()>;
     async fn bucket_exists(&self, name: &str) -> Result<bool>;
-    async fn write(&self, path: &Path, data: Vec<u8>) -> Result<()>;
+    async fn write(&self, path: &Path, data: &[u8]) -> Result<()>;
     async fn read(&self, path: &Path) -> Result<Vec<u8>>;
     async fn delete(&self, path: &Path) -> Result<()>;
     async fn list(&self, prefix: &Path) -> Result<Vec<String>>;
@@ -24,6 +27,12 @@ impl LocalStorageProvider {
         let root = root.into();
         fs::create_dir_all(&root).await.map_err(Error::from)?;
         Ok(Self { root })
+    }
+}
+
+impl Default for LocalStorageProvider {
+    fn default() -> Self {
+        Self { root: PathBuf::from(DEFAULT_LOCAL_STORAGE_PATH) }
     }
 }
 
@@ -44,7 +53,7 @@ impl StorageProvider for LocalStorageProvider {
         Ok(path.exists())
     }
 
-    async fn write(&self, path: &Path, data: Vec<u8>) -> Result<()> {
+    async fn write(&self, path: &Path, data: &[u8]) -> Result<()> {
         let full_path = self.root.join(path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent).await.map_err(Error::from)?;
@@ -76,27 +85,4 @@ impl StorageProvider for LocalStorageProvider {
         }
         Ok(entries)
     }
-}
-
-#[cfg(feature = "aws")]
-pub struct S3StorageProvider {
-    client: aws_sdk_s3::Client,
-    region: String,
-}
-
-#[cfg(feature = "aws")]
-impl S3StorageProvider {
-    pub fn new(region: String) -> Result<Self> {
-        let config = aws_sdk_s3::Config::builder()
-            .region(region.parse().map_err(|e| Error::Storage(e.to_string()))?)
-            .build();
-        let client = aws_sdk_s3::Client::from_conf(config);
-        Ok(Self { client, region })
-    }
-}
-
-#[cfg(feature = "aws")]
-#[async_trait]
-impl StorageProvider for S3StorageProvider {
-    // AWS S3 implementation would go here
 }

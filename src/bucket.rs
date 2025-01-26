@@ -1,9 +1,14 @@
 use serde::{Deserialize, Serialize};
+//use sha2::{Sha256, Digest};
 use tokio::sync::RwLock;
 
-use crate::error::{Error, Result};
+use crate::checksum::{compute_checksum, verify_checksum};
+use crate::error::Error;
+use crate::index::bucket::BucketIndex;
+use crate::shard::shard::Shard;
+use crate::types::Result;
 use crate::storage::StorageProvider;
-use crate::index::{IndexEntry, NativeIndex};
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 
@@ -22,21 +27,7 @@ impl Default for CompressionType {
     }
 }
 
-fn calculate_checksum(data: &[u8]) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().into()
- }
- 
- fn verify_checksum(data: &[u8], expected: &[u8; 32]) -> Result<()> {
-    let actual = calculate_checksum(data);
-    if actual == *expected {
-        Ok(())
-    } else {
-        Err(Error::Storage("Checksum mismatch".into()))
-    }
- }
+
 
  fn compress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     use flate2::write::GzEncoder;
@@ -58,7 +49,6 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     Ok(decompressed)
 }
 
-
 fn compress_lz4(data: &[u8]) -> Result<Vec<u8>> {
     Ok(lz4_flex::block::compress(data))
 }
@@ -71,73 +61,81 @@ fn compress_lz4(data: &[u8]) -> Result<Vec<u8>> {
 
 #[derive(Clone)]
 pub struct BucketConfig {
-    pub max_shard_size: u64,
     pub compression: CompressionType,
     pub parallelism: usize,
 }
 
 impl BucketConfig {
-    pub fn new(max_shard_size: u64, compression: CompressionType, parallelism: usize) -> Self {
-        Self { max_shard_size, compression, parallelism }
+    pub fn new(compression: CompressionType, parallelism: usize) -> Self {
+        Self { compression, parallelism }
     }
 }
 
 impl Default for BucketConfig {
     fn default() -> Self {
-        Self { max_shard_size: Default::default(), compression: Default::default(), parallelism: Default::default() }
+        Self { compression: Default::default(), parallelism: Default::default() }
     }
 }
 
 pub struct Bucket<P: StorageProvider> {
     name: String,
     provider: Arc<P>,
-    index: RwLock<NativeIndex>,
+    index: RwLock<BucketIndex>,
+    shards: Vec<Shard<P>>,
     config: BucketConfig,
 }
 
 
 impl<P: StorageProvider> Bucket<P> {
     pub fn new(name: String, provider: Arc<P>, config: BucketConfig) -> Self {
-        Self { name, provider, index: Default::default(), config }
+        Self { 
+            name, 
+            provider, 
+            index: Default::default(), 
+            shards: Default::default(), 
+            config 
+        }
     }
     
-    pub async fn write(&self, key: &str, data: Vec<u8>, metadata: Option<Vec<u8>>) -> Result<()> {
-        let mut index = self.index.write().await;
+    pub async fn write(&self, key: &str, data: &[u8], metadata: Option<Vec<u8>>) -> Result<()> {
+        let index = self.index.write().await;
         let shard_id = self.get_next_shard_id().await?;
         let shard_path = self.get_shard_path(shard_id);
         
         // Calculate checksum before any compression
-        let checksum = calculate_checksum(&data);
-        let data_len = data.len() as u64;
-     
+        let checksum = compute_checksum(&data);
+        let data_len = data.len();
+        
+        // TODO: we should use ShardWriter for this not write directely from the provider
         // Handle compression and writing
         match self.config.compression {
             CompressionType::None => self.provider.write(&shard_path, data).await?,
             CompressionType::Gzip => {
                 let compressed = compress_gzip(&data)?;
-                self.provider.write(&shard_path, compressed).await?
+                self.provider.write(&shard_path, compressed.as_ref()).await?
             },
             CompressionType::Lz4 => {
                 let compressed = compress_lz4(&data)?;
-                self.provider.write(&shard_path, compressed).await?
+                self.provider.write(&shard_path, compressed.as_ref()).await?
             },
             _ => return Err(Error::Storage("Unsupported compression".into()))
         };
+        
+        // TODO: index entry should be taken care of inside bucket index when we use shard writing API
+        // let entry = IndexEntry::new(
+        //     shard_id,
+        //     0,
+        //     data_len,
+        //     checksum
+        // );
      
-        let entry = IndexEntry::new(
-            shard_id,
-            0,
-            data_len,
-            checksum
-        );
+        // index.entries.entry(key.to_string())
+        //     .or_default()
+        //     .push(entry);
      
-        index.entries.entry(key.to_string())
-            .or_default()
-            .push(entry);
-     
-        if let Some(meta) = metadata {
-            index.metadata.insert(key.to_string(), meta);
-        }
+        // if let Some(meta) = metadata {
+        //     index.metadata.insert(key.to_string(), meta);
+        // }
      
         Ok(())
      }
@@ -185,12 +183,12 @@ impl<P: StorageProvider> Bucket<P> {
         Ok(index.metadata.get(key).cloned())
     }
  
-    async fn get_next_shard_id(&self) -> Result<u64> {
+    async fn get_next_shard_id(&self) -> Result<usize> {
         // Implementation for generating unique shard IDs
         Ok(0)
     }
  
-    fn get_shard_path(&self, shard_id: u64) -> std::path::PathBuf {
+    fn get_shard_path(&self, shard_id: usize) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.name).join(format!("shard_{:016x}", shard_id))
     }
  }
