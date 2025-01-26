@@ -59,7 +59,7 @@ impl<W: StorageProvider> ShardWriter<W> {
     /// - `entries` initialized as an empty vector of `IndexEntry`.
     pub fn new(id: ByteCounter, writer: W)  -> Self  {
         Self {
-            id: id,
+            id,
             provider: writer,
             current_size: 0,
             entries: Vec::new(),
@@ -100,8 +100,8 @@ impl<W: StorageProvider> ShardWriter<W> {
         let offset = self.current_size;
         let entry = IndexEntry::new(
             self.entries.len(),
-            offset as usize,
-            data_len as usize,
+            offset,
+            data_len,
             checksum,
         );
 
@@ -218,7 +218,7 @@ mod tests {
 
         let mut mock_provider = MockFakeStorageProvider::default();
         mock_provider.expect_write()
-            .with(eq(PathBuf::from(id.to_string())), eq(data.clone()))
+            .with(eq(PathBuf::from(id.to_string())), eq(*data))
             .times(1)
             .returning(|_, _| Ok(()));
         
@@ -273,7 +273,7 @@ mod tests {
         let mock_provider = MockFakeStorageProvider::default();
         let id = ByteCounter::default();
         let mut writer = ShardWriter::new(id, mock_provider);
-        let data = vec![0; (shard_size() + 1) as usize];
+        let data = vec![0; shard_size() + 1];
         let key = "key1";
 
         assert!(writer.write(key, &data, None).await.is_err());
@@ -289,12 +289,12 @@ mod tests {
         
         let mut mock_provider = MockFakeStorageProvider::default();
         mock_provider.expect_write()
-            .with(eq(PathBuf::from(id.to_string())), eq(data1.clone()))
+            .with(eq(PathBuf::from(id.to_string())), eq(*data1))
             .times(1)
             .returning(|_, _| Ok(()));
         
         mock_provider.expect_write()
-            .with(eq(PathBuf::from(id.to_string())), eq(data2.clone()))
+            .with(eq(PathBuf::from(id.to_string())), eq(*data2))
             .times(1)
             .returning(|_, _| Ok(()));
 
@@ -316,7 +316,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_with_large_metadata() {
         let data = b"some_data";
-        let metadata_size = (shard_size() - data.len()) as usize;
+        let metadata_size = shard_size() - data.len();
         let metadata = vec![0; metadata_size];
         let key = "key1";
         let id = ByteCounter::default();
@@ -363,7 +363,7 @@ mod tests {
 
         let mut mock_provider = MockFakeStorageProvider::default();
         mock_provider.expect_write()
-            .with(eq(PathBuf::from(id.to_string())), eq(data.clone()))
+            .with(eq(PathBuf::from(id.to_string())), eq(*data))
             .times(1)
             .returning(|_, _| Ok(()));
             

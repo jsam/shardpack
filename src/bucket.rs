@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum CompressionType {
+   #[default]
    None,
    Gzip,
    Lz4,
@@ -21,11 +23,6 @@ pub enum CompressionType {
    Snappy,
 }
 
-impl Default for CompressionType {
-    fn default() -> Self {
-        CompressionType::None
-    }
-}
 
 
 
@@ -60,6 +57,7 @@ fn compress_lz4(data: &[u8]) -> Result<Vec<u8>> {
 
 
 #[derive(Clone)]
+#[derive(Default)]
 pub struct BucketConfig {
     pub compression: CompressionType,
     pub parallelism: usize,
@@ -71,11 +69,6 @@ impl BucketConfig {
     }
 }
 
-impl Default for BucketConfig {
-    fn default() -> Self {
-        Self { compression: Default::default(), parallelism: Default::default() }
-    }
-}
 
 pub struct Bucket<P: StorageProvider> {
     name: String,
@@ -103,7 +96,7 @@ impl<P: StorageProvider> Bucket<P> {
         let shard_path = self.get_shard_path(shard_id);
         
         // Calculate checksum before any compression
-        let checksum = compute_checksum(&data);
+        let checksum = compute_checksum(data);
         let data_len = data.len();
         
         // TODO: we should use ShardWriter for this not write directely from the provider
@@ -111,11 +104,11 @@ impl<P: StorageProvider> Bucket<P> {
         match self.config.compression {
             CompressionType::None => self.provider.write(&shard_path, data).await?,
             CompressionType::Gzip => {
-                let compressed = compress_gzip(&data)?;
+                let compressed = compress_gzip(data)?;
                 self.provider.write(&shard_path, compressed.as_ref()).await?
             },
             CompressionType::Lz4 => {
-                let compressed = compress_lz4(&data)?;
+                let compressed = compress_lz4(data)?;
                 self.provider.write(&shard_path, compressed.as_ref()).await?
             },
             _ => return Err(Error::Storage("Unsupported compression".into()))
