@@ -1,6 +1,6 @@
 # shardpack
 
-ShardPack is a storage format for large-scale datasets designed to solve common data pipeline bottlenecks by reducing the amount of required I/O operations. It provides random access reads, efficient partial data loading, and comprehensive metadata handling through a fast implementation that integrates with Python. When standard data formats become a bottleneck in your training pipeline, ShardPack offers a pragmatic balance of performance and simplicity.
+ShardPack is a storage format for large-scale datasets designed to solve common data pipeline bottlenecks by reducing the amount of required I/O operations. It provides random access reads, efficient partial data loading, and comprehensive metadata handling through a fast implementation that integrates with Python.
 
 
 ### Key features:

@@ -24,8 +24,6 @@ pub enum CompressionType {
 }
 
 
-
-
  fn compress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
