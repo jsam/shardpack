@@ -4,7 +4,8 @@ use tokio::sync::RwLock;
 
 use crate::checksum::{compute_checksum, verify_checksum};
 use crate::error::Error;
-use crate::index::bucket::BucketIndex;
+use crate::index::bucket::{BucketIndex, IndexEntry};
+use crate::shard::config::shard_size;
 use crate::shard::shard::Shard;
 use crate::types::Result;
 use crate::storage::StorageProvider;
@@ -67,7 +68,6 @@ impl BucketConfig {
     }
 }
 
-
 pub struct Bucket<P: StorageProvider> {
     name: String,
     provider: Arc<P>,
@@ -88,48 +88,61 @@ impl<P: StorageProvider> Bucket<P> {
         }
     }
     
-    pub async fn write(&self, key: &str, data: &[u8], metadata: Option<Vec<u8>>) -> Result<()> {
+    pub async fn write(&mut self, key:  &str, data:  &Vec<u8>, metadata: Option<Vec<u8>>)  -> Result<()> {
         let index = self.index.write().await;
-        let shard_id = self.get_next_shard_id().await?;
-        let shard_path = self.get_shard_path(shard_id);
-        
-        // Calculate checksum before any compression
-        let checksum = compute_checksum(data);
-        let data_len = data.len();
-        
-        // TODO: we should use ShardWriter for this not write directely from the provider
-        // Handle compression and writing
-        match self.config.compression {
-            CompressionType::None => self.provider.write(&shard_path, data).await?,
-            CompressionType::Gzip => {
-                let compressed = compress_gzip(data)?;
-                self.provider.write(&shard_path, compressed.as_ref()).await?
-            },
-            CompressionType::Lz4 => {
-                let compressed = compress_lz4(data)?;
-                self.provider.write(&shard_path, compressed.as_ref()).await?
-            },
+        let current_shards = self.shards.len();
+
+        if current_shards == 0 {
+            // No active shards yet; create a new one
+            let new_shard = Shard::new();
+            self.shards.push(new_shard);
+        }
+
+        let last_shard_idx = current_shards - 1;
+        let last_shard_path = self.get_shard_path(last_shard_idx);
+
+        // Read the existing data from the last shard to check its size
+        let mut file = self.provider.read(&last_shard_path).await?;
+        // let mut buffer = Vec::new();
+        // file.read_to_end(&mut buffer)?;
+        let current_size = file.len();
+
+        // Determine if we need to create a new shard or use the existing one
+        let (shard_id, offset) = {
+            let available_space = shard_size() - current_size;
+            if available_space < data.len() {
+                // The data is too large for the current shard; create a new one
+                self.shards.push(Shard::new());
+                (current_shards, 0)
+            } else {
+                // Write to the current shard
+                (last_shard_idx, current_size)
+            }
+        };
+
+        let index_entry = IndexEntry::new(
+            shard_id,
+            offset,
+            data.len(),
+            compute_checksum(data)
+        );
+
+        // Handle compression based on config
+        let compressed_data = match self.config.compression {
+            CompressionType::None => data.clone(),
+            CompressionType::Gzip => compress_gzip(data)?,
+            CompressionType::Lz4 => compress_lz4(data)?,
             _ => return Err(Error::Storage("Unsupported compression".into()))
         };
-        
-        // TODO: index entry should be taken care of inside bucket index when we use shard writing API
-        // let entry = IndexEntry::new(
-        //     shard_id,
-        //     0,
-        //     data_len,
-        //     checksum
-        // );
-     
-        // index.entries.entry(key.to_string())
-        //     .or_default()
-        //     .push(entry);
-     
+
+        // Write the compressed data to the appropriate shard
+        self.provider.write(&last_shard_path, &compressed_data).await?;
+
         // if let Some(meta) = metadata {
         //     index.metadata.insert(key.to_string(), meta);
         // }
-     
         Ok(())
-     }
+    }
  
     pub async fn read(&self, key: &str) -> Result<Vec<u8>> {
         let index = self.index.read().await;
@@ -182,4 +195,5 @@ impl<P: StorageProvider> Bucket<P> {
     fn get_shard_path(&self, shard_id: usize) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.name).join(format!("shard_{:016x}", shard_id))
     }
+    
  }

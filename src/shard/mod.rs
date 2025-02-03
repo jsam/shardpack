@@ -1,5 +1,5 @@
 mod reader;
 mod writer;
-mod config;
 
+pub mod config;
 pub mod shard;
